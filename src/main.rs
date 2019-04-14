@@ -1,6 +1,11 @@
 extern crate reqwest;
 extern crate sitemap;
 extern crate url;
+#[macro_use] extern crate serde_derive;
+
+extern crate serde;
+extern crate serde_json;
+
 use select::predicate::Predicate;
 use sitemap::structs::{SiteMapEntry, UrlEntry};
 use sitemap::reader::{SiteMapReader,SiteMapEntity};
@@ -12,6 +17,7 @@ use rayon::prelude::*;
 use select::document::Document;
 use select::predicate::Class;
 use select::predicate::Name;
+use std::fs::File;
 
 #[derive(Debug)]
 pub enum SiteMapComponent {
@@ -19,7 +25,7 @@ pub enum SiteMapComponent {
     Url(UrlEntry)
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Entry {
     title: String,
     category: String,
@@ -60,9 +66,15 @@ fn parse_sitemap_response(response: Response) -> HashSet<Url> {
 }
 
 fn fetch_and_parse_sitemap(client: &reqwest::Client, url: &str) -> HashSet<Url> {
-    let response = client.get(url).send().unwrap();
+    let response = client.get(url).send();
+    match response {
+        Ok(resp) => parse_sitemap_response(resp),
+        Err(e) => {
+            println!("{:?}", e);
+            return HashSet::new()
+        }
+    }
 
-    return parse_sitemap_response(response);
 }
 
 fn fetch_and_parse_entry(url: &str) -> Vec<Entry> {
@@ -129,13 +141,18 @@ fn main() {
         .unwrap();
     let sitemaps = &fetch_and_parse_sitemap(&client, &base_url);
 
-    for sitemap_url in sitemaps {
+    for (i, sitemap_url) in sitemaps.iter().enumerate() {
+        println!("Fetching/parse: \t {}", sitemap_url);
+
         let entry_urls = fetch_and_parse_sitemap(&client, sitemap_url.as_str());
         let entries: Vec<Entry> = entry_urls.par_iter().flat_map(|entry_url| {
             fetch_and_parse_entry(entry_url.as_str())
         }).collect();
 
-        println!("{}", entries.len())
+        // Serialize it to a JSON string.
+        let fname = format!("data/data_{}.json", i);
+        let f = File::create(fname).unwrap();
+        serde_json::to_writer(&f, &entries).unwrap()
     };
 
 }
