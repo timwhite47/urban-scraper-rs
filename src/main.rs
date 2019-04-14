@@ -77,11 +77,8 @@ fn fetch_and_parse_sitemap(client: &reqwest::Client, url: &str) -> HashSet<Url> 
 
 }
 
-fn fetch_and_parse_entry(url: &str) -> Vec<Entry> {
-    let resp = reqwest::get(url).unwrap();
-    assert!(resp.status().is_success());
-
-    let document = Document::from_read(resp).unwrap();
+fn parse_entry(response: Response) -> Vec<Entry> {
+    let document = Document::from_read(response).unwrap();
 
     //  Get all definitions
     document.find(Class("def-panel")).into_iter().map(|definition| {
@@ -129,6 +126,18 @@ fn fetch_and_parse_entry(url: &str) -> Vec<Entry> {
             votes
         }
     }).collect()
+}
+
+fn fetch_and_parse_entry(url: &str) -> Vec<Entry> {
+    match reqwest::get(url) {
+        Ok(resp) => parse_entry(resp),
+        Err(e) => {
+            println!("{}", e);
+
+            return vec![]
+        }
+    }
+
 }
 
 fn main() {
