@@ -1,0 +1,12 @@
+[package]
+name = "urban-scraper-rs"
+version = "0.1.0"
+authors = ["Tim White <tim@timwhite.ninja>"]
+edition = "2018"
+
+[dependencies]
+reqwest = "0.9.14"
+sitemap = "0.3.0"
+tempdir = "0.3.7"
+url = "1.7.2"
+rayon = "1.0.3"
