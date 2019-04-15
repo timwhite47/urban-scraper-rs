@@ -18,6 +18,8 @@ use select::document::Document;
 use select::predicate::Class;
 use select::predicate::Name;
 use std::fs::File;
+use select::node::Find;
+use select::node::Node;
 
 #[derive(Debug)]
 pub enum SiteMapComponent {
@@ -78,69 +80,100 @@ fn fetch_and_parse_sitemap(client: &reqwest::Client, url: &str) -> HashSet<Url> 
 
 }
 
-fn parse_entry(response: Response, url_str: &str) -> Vec<Entry> {
-    let document = Document::from_read(response).unwrap();
+fn parse_text(mut finder: Find<Class<&str>>) -> String {
+    match finder.next() {
+        Some(el) => el.text(),
+        None => String::new(),
+    }
+}
+
+fn parse_tags(definition: &Node) -> Vec<String> {
+    definition
+        .find(Class("tags").descendant(Name("a")))
+        .map(|tag| tag.text())
+        .collect()
+}
+
+fn parse_votes(definition: &Node) -> HashMap<String, i32> {
+    let node = definition.find(Class("thumbs")).next();
+    let mut votes = HashMap::new();
+
+    match node {
+        Some(vote_node) => {
+            let up_node = vote_node.find(Class("up")).next();
+            let down_node = vote_node.find(Class("down")).next();
+
+            if up_node.is_some() && down_node.is_some() {
+                let up = up_node.expect("Could not parse up votes");
+                let down = down_node.expect("Could not parse down votes");
+
+                let up_votes: i32 = up.text().parse().expect("Could not parse up votes");
+                let down_votes: i32 = down.text().parse().expect("Could not parse down votes");
+
+                votes.insert(String::from("up"), up_votes);
+                votes.insert(String::from("down"), down_votes);
+            }
+
+        },
+        None => {},
+    }
+
+    return votes
+}
+
+fn parse_entry(response: Response, url_str: &str) -> Vec<Option<Entry>> {
+    let document = Document::from_read(response)
+        .expect("Could not turn response into document");
 
     //  Get all definitions
     document.find(Class("def-panel")).into_iter().map(|definition| {
         let url = String::from(url_str);
 
-        let header = definition
-            .find(Class("def-header"))
-            .next().unwrap();
+        let header_el = definition
+            .find(Class("def-header")).next();
 
-        let title = header
-            .find(Class("word"))
-            .next().unwrap().text();
+        match header_el {
+            Some(header) => {
+                let title = parse_text(
+                    header.find(Class("word"))
+                );
 
-        let category = header
-            .find(Class("category"))
-            .next().unwrap().text();
+               let category = parse_text(
+                   header.find(Class("category"))
+                );
 
-        let meaning = definition
-            .find(Class("meaning"))
-            .next().unwrap().text();
+                let meaning = parse_text(
+                    definition.find(Class("meaning"))
+                );
 
-        let example = definition
-            .find(Class("example"))
-            .next().unwrap().text();
+                let example = parse_text(
+                    definition.find(Class("example"))
+                );
 
-        let vote_node = definition
-            .find(Class("thumbs"))
-            .next().unwrap();
+                let tags: Vec<String> = parse_tags(&definition);
 
-        let up_votes: i32 = vote_node
-            .find(Class("up"))
-            .next().unwrap().text().parse()
-            .unwrap();
+                let votes = parse_votes(&definition);
 
-        let down_votes: i32 = vote_node
-            .find(Class("down"))
-            .next().unwrap().text()
-            .parse().unwrap();
+                let entry = Entry {
+                    url,
+                    title,
+                    category,
+                    meaning,
+                    example,
+                    tags,
+                    votes
+                };
 
-        let mut votes = HashMap::new();
-        votes.insert(String::from("up"), up_votes);
-        votes.insert(String::from("down"), down_votes);
-
-        let tags: Vec<String> = definition
-            .find(Class("tags").descendant(Name("a")))
-            .map(|tag| tag.text())
-            .collect();
-
-        return Entry {
-            url,
-            title,
-            category,
-            meaning,
-            example,
-            tags,
-            votes
+                Some(entry)
+            },
+            None => None
         }
+
+
     }).collect()
 }
 
-fn fetch_and_parse_entry(url: &str) -> Vec<Entry> {
+fn fetch_and_parse_entry(url: &str) -> Vec<Option<Entry>> {
     match reqwest::get(url) {
         Ok(resp) => parse_entry(resp, url),
         Err(e) => {
@@ -167,7 +200,14 @@ fn main() {
 
         let entry_urls = fetch_and_parse_sitemap(&client, sitemap_url.as_str());
         let entries: Vec<Entry> = entry_urls.par_iter().flat_map(|entry_url| {
-            fetch_and_parse_entry(entry_url.as_str())
+            let resp: Vec<Entry> = fetch_and_parse_entry(entry_url.as_str())
+                    .into_iter()
+                    .filter(|entry| entry.is_some())
+                    .map(|entry| entry.expect("Could not get entry"))
+                    .collect();
+
+            resp
+
         }).collect();
 
         // Serialize it to a JSON string.
